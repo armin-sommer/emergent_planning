@@ -387,7 +387,7 @@ def sokoban_gtrxl() -> Args:
         num_minibatches=8,
         rmsprop_eps=1.5625e-07,
         local_num_envs=256,
-        total_timesteps=80117760,
+        total_timesteps=500121600 ,
         base_run_dir=Path("/training/cleanba"),
         max_grad_norm=2.5e-4,
         num_actor_threads=1,
