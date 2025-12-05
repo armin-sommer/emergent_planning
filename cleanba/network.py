@@ -2,12 +2,32 @@ import abc
 import dataclasses
 from typing import Any, Literal, SupportsFloat
 
+import flax
 import flax.linen as nn
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax.typing import Axes, Shape
+
+# JAX/Flax compatibility shim:
+# Some newer JAX traces (e.g. EvalTrace) no longer expose `.level`,
+# but older Flax versions still access `main.level` directly. Patch
+# `trace_level` to gracefully handle missing attributes.
+try:  # pragma: no cover - defensive patch
+    from flax.core import tracers as _flax_tracers  # type: ignore[attr-defined]
+
+    if hasattr(_flax_tracers, "trace_level"):
+        def _compat_trace_level(main):
+            if main:
+                return getattr(main, "level", float("-inf"))
+            return float("-inf")
+
+        _flax_tracers.trace_level = _compat_trace_level  # type: ignore[assignment]
+except Exception:
+    # If anything goes wrong importing/patching, fall back silently;
+    # at worst, behavior is unchanged and the original error surfaces.
+    pass
 
 AgentParams = dict[str, Any]
 
