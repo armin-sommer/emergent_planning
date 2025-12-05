@@ -6,6 +6,8 @@ This repository contains training code for the paper ["Planning behavior in a re
 The [learned-planner repository](https://github.com/AlignmentResearch/learned-planner) lets you download and use the trained neural networks. If you just want to do interpretability, you should go there.
 
 ## :rocket: Running Training
+OLLLDD; OUTDATED:
+
 
 First, clone the repo with:
 
