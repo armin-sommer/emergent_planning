@@ -36,6 +36,10 @@ chex==0.1.88
     #   optax
     #   rlax
     #   train-learned-planner (pyproject.toml)
+jax==0.4.38
+    # via chex
+jaxlib==0.4.38
+    # via jax
 click==8.1.8
     # via
     #   ray
@@ -253,7 +257,7 @@ protobuf==5.29.2
     #   wandb
 psutil==6.1.1
     # via wandb
-pyarrow==18.1.0
+pyarrow==17.0.0
     # via ray
 pyasn1==0.6.1
     # via

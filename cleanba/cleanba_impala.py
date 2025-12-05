@@ -803,9 +803,16 @@ def train(
                 for d_idx, d_id in enumerate(args.actor_device_ids):
                     device_params = jax.device_put(unreplicated_params, runtime_info.local_devices[d_id])
                     for thread_id in range(args.num_actor_threads):
-                        params_queues[d_idx * args.num_actor_threads + thread_id].put(
-                            (device_params, args.learner_policy_version), timeout=args.queue_timeout
-                        )
+                        q_idx = d_idx * args.num_actor_threads + thread_id
+                        try:
+                            # Non-blocking put: if the queue is full (e.g., during eval),
+                            # drop this update instead of raising queue.Full and crashing.
+                            params_queues[q_idx].put(
+                                (device_params, args.learner_policy_version),
+                                block=False,
+                            )
+                        except queue.Full:
+                            pass
 
             # Copy the parameters from the first device to all other learner devices
             if len(runtime_info.global_learner_devices) > 1 and args.learner_policy_version % args.sync_frequency == 0:

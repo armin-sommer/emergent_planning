@@ -182,7 +182,9 @@ class Policy(nn.Module):
 
 
 @dataclasses.dataclass(frozen=True)
-class AtariCNNSpec(PolicySpec):
+class CNNEncoderSpec(PolicySpec):
+    """Shared CNN encoder spec for image-based environments."""
+
     channels: tuple[int, ...] = (16, 32, 32)  # the channels of the CNN
     strides: tuple[int, ...] = (2, 2, 2)
     mlp_hiddens: tuple[int, ...] = (256,)  # the hiddens size of the MLP
@@ -190,6 +192,21 @@ class AtariCNNSpec(PolicySpec):
 
     def make(self) -> "AtariCNN":
         return AtariCNN(self)
+
+
+@dataclasses.dataclass(frozen=True)
+class AtariCNNSpec(CNNEncoderSpec):
+    """Atari-style encoder: strided convs with max-pooling."""
+
+
+@dataclasses.dataclass(frozen=True)
+class SokobanCNNSpec(CNNEncoderSpec):
+    """Sokoban/Boxoban encoders (stride-1, no pooling by default)."""
+
+    channels: tuple[int, ...] = (32, 64, 64)
+    strides: tuple[int, ...] = (1, 1, 1)
+    mlp_hiddens: tuple[int, ...] = (256,)
+    max_pool: bool = False
 
 
 NONLINEARITY_GAINS: dict[str, SupportsFloat] = dict(
@@ -279,7 +296,7 @@ class ConvSequence(nn.Module):
 
 
 class AtariCNN(nn.Module):
-    cfg: AtariCNNSpec
+    cfg: CNNEncoderSpec
 
     @nn.compact
     def __call__(self, x):

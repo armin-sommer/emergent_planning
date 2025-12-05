@@ -387,6 +387,33 @@ class AtariEnv(EnvpoolEnvConfig):
     full_action_space: bool = True  # Machado et al. 2017 (Revisitng ALE: Eval protocols) Tab. 5
     reward_clip: bool = True
 
+    @property
+    def make(self) -> Callable[[], gym.vector.VectorEnv]:
+        """
+        Prefer EnvPool when available; otherwise fall back to Gymnasium vector Atari so we can run on macOS without envpool.
+        """
+        try:
+            import envpool  # type: ignore
+        except ImportError:
+            # Gymnasium fallback (uses NHWC, so wrap to NCHW for the network).
+            gym_env_id = self.env_id if "/" in self.env_id else f"ALE/{self.env_id}"
+            return partial(
+                VectorNHWCtoNCHWWrapper.from_fn,
+                partial(
+                    gym.vector.make,
+                    gym_env_id,
+                    num_envs=self.num_envs,
+                    asynchronous=False,
+                    max_episode_steps=self.max_episode_steps,
+                    repeat_action_probability=self.repeat_action_probability,
+                    full_action_space=self.full_action_space,
+                ),
+                getattr(self, "nn_without_noop", False),
+            )
+
+        # If envpool is installed, use the high-performance implementation.
+        return super().make
+
 
 def convert_to_cleanba_config(env_config, asynchronous=False):
     """Converts an environment config from the learned_planner package to a cleanba environment config."""

@@ -147,3 +147,5 @@ envpool
 .build
 .vscode
 k8s_copy/
+.idea/
+boxoban_cache/

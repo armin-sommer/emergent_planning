@@ -4,12 +4,30 @@ from pathlib import Path
 from typing import List, Optional
 
 from cleanba.convlstm import ConvConfig, ConvLSTMCellConfig, ConvLSTMConfig
-from cleanba.environments import AtariEnv, BoxWorldConfig, EnvConfig, EnvpoolBoxobanConfig, MiniPacManConfig, random_seed
+from cleanba.environments import (
+    AtariEnv,
+    BoxWorldConfig,
+    BoxobanConfig,
+    EnvConfig,
+    EnvpoolBoxobanConfig,
+    MiniPacManConfig,
+    SokobanConfig,
+    random_seed,
+)
 from cleanba.evaluate import EvalConfig
 from cleanba.impala_loss import (
     ImpalaLossConfig,
 )
-from cleanba.network import AtariCNNSpec, GuezResNetConfig, IdentityNorm, PolicySpec, SokobanResNetConfig
+from cleanba.gtrxl import DEFAULT_GTRXL_ENCODER, GTrXLConfig
+from cleanba.network import CNNEncoderSpec, GuezResNetConfig, IdentityNorm, PolicySpec, RMSNorm, SokobanCNNSpec, SokobanResNetConfig
+
+SOKOBAN_DEFAULT_ENCODER: CNNEncoderSpec = SokobanCNNSpec(
+    channels=(32, 64, 64), strides=(1, 1, 1), mlp_hiddens=(256,), max_pool=False
+)
+
+SOKOBAN_GTRXL_ENCODER: CNNEncoderSpec = SokobanCNNSpec(
+    channels=(64, 64, 64, 64), strides=(1, 1, 1, 1), max_pool=False, mlp_hiddens=(256,)
+)
 
 
 @dataclasses.dataclass
@@ -47,7 +65,8 @@ class Args:
 
     loss: ImpalaLossConfig = ImpalaLossConfig()
 
-    net: PolicySpec = AtariCNNSpec(channels=(16, 32, 32), mlp_hiddens=(256,))
+    # Default to Transformer (GTrXL) core; swap to other PolicySpec variants as needed.
+    net: PolicySpec | None = None
 
     # Algorithm specific arguments
     total_timesteps: int = 100_000_000  # total timesteps of the experiments
@@ -80,6 +99,10 @@ class Args:
 
     finetune_with_noop_head: bool = False  # Whether to finetune the model with a noop head
     frozen_finetune_steps_ratio: float = 0.5  # fraction of steps to finetune ONLY the head of model with new noop action
+
+    def __post_init__(self):
+        # Normalize the policy spec so it always uses the env-appropriate encoder (and defaults to GTrXL if missing).
+        object.__setattr__(self, "net", resolve_default_net(self.train_env, self.net))
 
 
 def sokoban_resnet() -> Args:
@@ -286,6 +309,111 @@ def sokoban_resnet59():
         num_actor_threads=1,
         seed=4242,
     )
+
+
+def sokoban_gtrxl() -> Args:
+    """Sokoban preset using the Transformer (GTrXL) core with longer memory and stride-1 encoder."""
+    CACHE_PATH = Path("/opt/sokoban_cache")
+    train_env = EnvpoolBoxobanConfig(
+        max_episode_steps=120,
+        min_episode_steps=120 * 3 // 4,
+        num_envs=1,
+        cache_path=CACHE_PATH,
+        split="train",
+        difficulty="unfiltered",
+        nn_without_noop=False,
+    )
+    eval_env_medium = EnvpoolBoxobanConfig(
+        seed=5454,
+        max_episode_steps=240,
+        min_episode_steps=240,
+        num_envs=256,
+        cache_path=CACHE_PATH,
+        split="valid",
+        difficulty="medium",
+        nn_without_noop=False,
+    )
+    eval_env_test = EnvpoolBoxobanConfig(
+        seed=5454,
+        max_episode_steps=240,
+        min_episode_steps=240,
+        num_envs=256,
+        cache_path=CACHE_PATH,
+        split="test",
+        difficulty="unfiltered",
+        nn_without_noop=False,
+    )
+
+    return Args(
+        train_env=train_env,
+        eval_envs=dict(
+            valid_medium=EvalConfig(
+                eval_env_medium,
+                n_episode_multiple=2,
+                steps_to_think=[0, 2, 4, 8, 12, 16, 24, 32],
+            ),
+            test_unfiltered=EvalConfig(
+                eval_env_test,
+                n_episode_multiple=2,
+                steps_to_think=[0],
+            ),
+        ),
+        log_frequency=10,
+        net=GTrXLConfig(
+            encoder=SOKOBAN_GTRXL_ENCODER,
+            d_model=256,
+            n_heads=4,
+            n_layers=6,
+            mem_len=256,
+            ff_mult=4,
+            dropout=0.0,
+            mlp_hiddens=(256,),
+            norm=RMSNorm(eps=1e-8),
+            normalize_input=True,
+        ),
+        loss=ImpalaLossConfig(
+            vtrace_lambda=0.5,
+            vf_coef=0.25,
+            ent_coef=0.01,
+            weight_l2_coef=1.5625e-07,
+            gamma=0.97,
+            logit_l2_coef=1.5625e-05,
+            normalize_advantage=False,
+        ),
+        learning_rate=0.0004,
+        optimizer="adam",
+        final_learning_rate=4e-6,
+        num_steps=20,
+        num_minibatches=8,
+        rmsprop_eps=1.5625e-07,
+        local_num_envs=256,
+        total_timesteps=80117760,
+        base_run_dir=Path("/training/cleanba"),
+        max_grad_norm=2.5e-4,
+        num_actor_threads=1,
+    )
+
+
+def resolve_default_net(train_env: EnvConfig, net: PolicySpec | None) -> PolicySpec:
+    """
+    Ensure the policy uses an env-appropriate encoder and provide a default when missing, all in one place.
+    - Determine the correct encoder for `train_env` (Sokoban/Boxoban -> stride-1 `SokobanCNNSpec`, else Atari encoder).
+    - If `net` is None: create a `GTrXLConfig` with that encoder.
+    - If `net` is a `GTrXLConfig` left at the default Atari encoder: swap in the env-specific encoder.
+    - Otherwise: return the provided `net` unchanged.
+    """
+    if isinstance(train_env, (EnvpoolBoxobanConfig, BoxobanConfig, SokobanConfig)):
+        encoder: CNNEncoderSpec = SOKOBAN_DEFAULT_ENCODER
+    else:
+        encoder = DEFAULT_GTRXL_ENCODER
+
+    if net is None:
+        return GTrXLConfig(encoder=encoder)
+
+    if isinstance(net, GTrXLConfig) and net.encoder == DEFAULT_GTRXL_ENCODER:
+        return dataclasses.replace(net, encoder=encoder)
+
+    return net
 
 
 def sokoban_drc33_59() -> Args:

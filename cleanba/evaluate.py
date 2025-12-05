@@ -180,14 +180,17 @@ def get_cycles(
     A cycle is a sequence of observations with the same starting and ending observations.
 
     Args:
-        :param all_obs: A sequence of observations, shape (time, 3, H, W) where H == W.
+        :param all_obs: A sequence of observations, shape (time, 3, H, W).
         :param last_box_time_step: The last time step where a box was pushed onto a target.
         :param cycle_starts_within: Only consider cycles starting within the first `cycle_starts_within` time steps.
         :param min_cycle_length: Only consider cycles of length at least `min_cycle_length`.
     Returns:
         A list of tuples, where each tuple is a cycle (start, length).
     """
-    assert all_obs.shape[1] == 3 and all_obs.shape[2] == all_obs.shape[3], all_obs.shape
+    # Require 3 RGB channels; handle non-square frames (e.g. Atari 210x160) by skipping cycle detection.
+    assert all_obs.shape[1] == 3, all_obs.shape
+    if all_obs.shape[2] != all_obs.shape[3]:
+        return []
     assert last_box_time_step is not None
     cycle_starts_within = cycle_starts_within or all_obs.shape[0]
     all_obs = all_obs[:last_box_time_step]
