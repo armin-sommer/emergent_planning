@@ -174,7 +174,7 @@ class GTrXLConfig(PolicySpec):
     d_model: int = 256
     n_heads: int = 4
     n_layers: int = 8
-    mem_len: int = 512
+    mem_len: int = 128
     ff_mult: int = 4
     dropout: float = 0.0  # keep 0.0 unless you plumb through a deterministic flag from the caller
     mlp_hiddens: tuple[int, ...] = (256,)
