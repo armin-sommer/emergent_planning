@@ -31,6 +31,7 @@ from rich.pretty import pprint
 from typing_extensions import Self
 
 from cleanba.config import Args
+from cleanba.gtrxl import GTrXLConfig
 from cleanba.convlstm import ConvLSTMConfig
 from cleanba.environments import convert_to_cleanba_config, random_seed
 from cleanba.evaluate import EvalConfig
@@ -539,6 +540,62 @@ def linear_schedule(
     return initial_learning_rate + frac * (final_learning_rate - initial_learning_rate)
 
 
+def entropy_coef_for_step(global_step: int, args: Args) -> float:
+    """
+    Compute the entropy coefficient for the current training step.
+
+    This only applies an annealing schedule when:
+    - The policy core is GTrXL (`args.net` is a `GTrXLConfig`), and
+    - `args.loss.entropy_anneal_schedule` is not "none".
+
+    Otherwise it simply returns `args.loss.ent_coef`.
+    """
+    base = float(args.loss.ent_coef)
+    if base == 0.0:
+        return 0.0
+
+    # Only anneal for GTrXL-based policies
+    if not isinstance(args.net, GTrXLConfig):
+        return base
+
+    schedule = getattr(args.loss, "entropy_anneal_schedule", "none")
+    if schedule == "none":
+        return base
+
+    total_timesteps = float(args.total_timesteps)
+    if total_timesteps <= 0.0:
+        return base
+
+    frac = float(global_step) / total_timesteps
+    if frac <= 0.0:
+        return base
+    if frac >= 1.0:
+        frac = 1.0
+
+    start_frac: float = getattr(args.loss, "entropy_anneal_start_frac", 0.7)
+    if frac <= start_frac:
+        return base
+
+    # Progress within the annealing window [start_frac, 1.0].
+    denom = max(1e-8, 1.0 - start_frac)
+    progress = (frac - start_frac) / denom
+
+    final_scale: float = getattr(args.loss, "entropy_anneal_final_scale", 0.0)
+
+    if schedule == "linear":
+        # Linear interpolation from scale=1.0 to `final_scale`.
+        scale = 1.0 + (final_scale - 1.0) * progress
+    elif schedule == "cosine":
+        # Cosine interpolation from scale=1.0 to `final_scale`.
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        scale = final_scale + (1.0 - final_scale) * cosine
+    else:
+        # Fallback: no annealing if an unknown schedule is provided.
+        scale = 1.0
+
+    return float(base * scale)
+
+
 def make_optimizer(
     args: Args,
     params: AgentParams,
@@ -790,6 +847,14 @@ def train(
                     sharded_storages.append(sharded_storage)
             rollout_queue_get_time.append(time.time() - rollout_queue_get_time_start)
             training_time_start = time.time()
+            # Compute (possibly annealed) entropy coefficient; this only changes
+            # when using the GTrXL core and a non-"none" schedule.
+            current_ent_coef = entropy_coef_for_step(global_step, args)
+            ent_coef_per_device = jnp.full(
+                (len(runtime_info.global_learner_devices),),
+                current_ent_coef,
+                dtype=jnp.float32,
+            )
             for _ in range(args.train_epochs):
                 (
                     agent_state,
@@ -797,6 +862,7 @@ def train(
                 ) = multi_device_update(
                     agent_state,
                     sharded_storages,
+                    ent_coef_per_device,
                 )
             unreplicated_params = unreplicate(agent_state.params)
             if update > args.actor_update_cutoff or update % args.actor_update_frequency == 0:
@@ -848,6 +914,7 @@ def train(
                 writer.add_scalar("losses/policy_loss", metrics_dict.pop("pg_loss")[0].item(), global_step)
                 writer.add_scalar("losses/entropy", metrics_dict.pop("ent_loss")[0].item(), global_step)
                 writer.add_scalar("losses/loss", metrics_dict.pop("loss")[0].item(), global_step)
+                writer.add_scalar("losses/entropy_coef", current_ent_coef, global_step)
 
                 for name, value in metrics_dict.items():
                     writer.add_scalar(name, value[0].item(), global_step)

@@ -70,6 +70,7 @@ def test_impala_loss_zero_when_accurate(gamma: float, num_timesteps: int, last_v
     obs_t = correct_returns  #  Mimic how actual rollouts collect observations
     logits_t = jnp.zeros((num_timesteps, batch_size, 1))
     a_t = jnp.zeros((num_timesteps, batch_size), dtype=jnp.int32)
+    loss_cfg = ImpalaLossConfig(gamma=gamma)
     (total_loss, metrics_dict) = impala_loss(
         params={},
         get_logits_and_value=lambda params, carry, obs, episode_starts: (
@@ -78,7 +79,7 @@ def test_impala_loss_zero_when_accurate(gamma: float, num_timesteps: int, last_v
             obs,
             {},
         ),
-        args=ImpalaLossConfig(gamma=gamma),
+        args=loss_cfg,
         minibatch=Rollout(
             obs_t=jnp.array(obs_t),
             carry_t=(),
@@ -88,6 +89,7 @@ def test_impala_loss_zero_when_accurate(gamma: float, num_timesteps: int, last_v
             logits_t=logits_t,
             r_t=rewards,
         ),
+        ent_coef=jnp.array(loss_cfg.ent_coef),
     )
 
     assert np.allclose(metrics_dict["pg_loss"], 0.0)
@@ -239,11 +241,13 @@ def test_loss_of_rollout(min_episode_steps: int, num_envs: int = 5, gamma: float
             episode_starts_t=transition.episode_starts_t,
             truncated_t=transition.truncated_t,
         )
+        loss_cfg = ImpalaLossConfig(gamma=gamma, logit_l2_coef=0.0)
         (total_loss, metrics_dict) = impala_loss(
             params=params,
             get_logits_and_value=get_logits_and_value_fn,
-            args=ImpalaLossConfig(gamma=gamma, logit_l2_coef=0.0),
+            args=loss_cfg,
             minibatch=transition,
+            ent_coef=jnp.array(loss_cfg.ent_coef),
         )
         logit_negentropy = -jnp.mean(distrax.Categorical(transition.logits_t).entropy() * (~transition.truncated_t))
 

@@ -17,6 +17,16 @@ class ImpalaLossConfig:
     ent_coef: float = 0.01  # coefficient of the entropy
     vf_coef: float = 0.25  # coefficient of the value function
 
+    # Optional schedule for annealing the entropy coefficient near the end of training.
+    # This is only used when the GTrXL core is active and a non-"none" schedule is selected.
+    # "none"   -> keep `ent_coef` constant.
+    # "linear" -> linearly decay `ent_coef` toward `entropy_anneal_final_scale * ent_coef`
+    #            over the last (1 - entropy_anneal_start_frac) fraction of training.
+    # "cosine" -> cosine decay over the same window.
+    entropy_anneal_schedule: Literal["none", "linear", "cosine"] = "none"
+    entropy_anneal_start_frac: float = 0.7
+    entropy_anneal_final_scale: float = 0.0
+
     # Interpolate between VTrace (1.0) and monte-carlo function (0.0) estimates, for the estimate of targets, used in
     # both the value and policy losses. It's the parameter in Remark 2 of Espeholt et al.
     # (https://arxiv.org/pdf/1802.01561.pdf)
@@ -86,6 +96,7 @@ def impala_loss(
     get_logits_and_value: GetLogitsAndValueFn,
     args: ImpalaLossConfig,
     minibatch: Rollout,
+    ent_coef: jax.Array,
 ) -> tuple[jax.Array, dict[str, jax.Array]]:
     # If the episode has actually terminated, the outgoing state's value is known to be zero.
     #
@@ -184,7 +195,7 @@ def impala_loss(
 
     total_loss = pg_loss
     total_loss += args.vf_coef * v_loss
-    total_loss += args.ent_coef * ent_loss
+    total_loss += ent_coef * ent_loss
     total_loss += args.logit_l2_coef * jnp.sum(jnp.square(nn_logits_from_obs))
 
     actor_params = jax.tree.leaves(params.get("params", {}).get("actor_params", {}))
@@ -217,6 +228,7 @@ def tree_flatten_and_concat(x) -> jax.Array:
 def single_device_update(
     agent_state: TrainState,
     sharded_storages: List[Rollout],
+    ent_coef: jax.Array,
     *,
     get_logits_and_value: GetLogitsAndValueFn,
     num_batches: int,
@@ -228,6 +240,7 @@ def single_device_update(
             get_logits_and_value,
             impala_cfg,
             minibatch,
+            ent_coef,
         )
         metrics_dict["loss"] = loss
         grads = jax.lax.pmean(grads, axis_name=SINGLE_DEVICE_UPDATE_DEVICES_AXIS)
