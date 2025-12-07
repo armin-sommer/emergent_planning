@@ -372,7 +372,7 @@ def sokoban_gtrxl() -> Args:
             normalize_input=True,
         ),
         loss=ImpalaLossConfig(
-            vtrace_lambda=0.9,
+            vtrace_lambda=0.5,
             vf_coef=0.25,
             ent_coef=0.01,
             weight_l2_coef=1.5625e-07,
