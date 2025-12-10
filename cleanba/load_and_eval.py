@@ -79,6 +79,8 @@ class LoadAndEvalArgs:
 
     # for Writer
     base_run_dir: Path = Path("/training/cleanba")
+    duplicate_last_block: bool = False
+    freeze_duplicate: bool = True
 
     @property
     def total_timesteps(self) -> int:
@@ -124,12 +126,22 @@ def load_and_eval(args: LoadAndEvalArgs):
         checkpoints_to_load = checkpoints_to_load[-1:]
     print("Going to load from checkpoints: ", checkpoints_to_load)
     env_cfg = next(iter(args.eval_envs.values())).env
-    policy, _, cp_cfg, train_state, _ = load_train_state(checkpoints_to_load[0][1], env_cfg=env_cfg)
+    policy, _, cp_cfg, train_state, _ = load_train_state(
+        checkpoints_to_load[0][1],
+        env_cfg=env_cfg,
+        duplicate_last_block=args.duplicate_last_block,
+        freeze_duplicate=args.freeze_duplicate,
+    )
     get_action_fn = jax.jit(partial(policy.apply, method=policy.get_action), static_argnames="temperature")
 
     writer = WandbWriter(cp_cfg, wandb_cfg_extra_data={"load_other_run": str(args.load_other_run)})
     for cp_step, cp_path in checkpoints_to_load:
-        _, _, _, train_state, _ = load_train_state(cp_path, env_cfg=env_cfg)
+        _, _, _, train_state, _ = load_train_state(
+            cp_path,
+            env_cfg=env_cfg,
+            duplicate_last_block=args.duplicate_last_block,
+            freeze_duplicate=args.freeze_duplicate,
+        )
         print("Evaluating", cp_path)
 
         for eval_name, evaluator in args.eval_envs.items():

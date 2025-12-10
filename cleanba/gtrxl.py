@@ -179,6 +179,8 @@ class GTrXLConfig(PolicySpec):
     dropout: float = 0.0  # keep 0.0 unless you plumb through a deterministic flag from the caller
     mlp_hiddens: tuple[int, ...] = (256,)
     norm: NormConfig = RMSNorm()
+    duplicate_last_block: bool = False
+    freeze_duplicate: bool = True
 
     def make(self) -> "GTrXL":
         return GTrXL(self)
@@ -235,6 +237,13 @@ class GTrXL(nn.Module):
         for layer, mem in zip(self.layers, mems):
             h, mem = layer(h, mem, mask, deterministic=deterministic)
             new_mems.append(mem)
+
+        if self.cfg.duplicate_last_block and self.layers:
+            last_layer = self.layers[-1]
+            last_mem = new_mems[-1]
+            dup_input = jax.lax.stop_gradient(h) if self.cfg.freeze_duplicate else h
+            h, last_mem = last_layer(dup_input, last_mem, mask, deterministic=deterministic)
+            new_mems[-1] = last_mem
 
         h = h.squeeze(1)  # (B, d_model)
         for dense, norm in zip(self.head_mlp, self.head_norms):

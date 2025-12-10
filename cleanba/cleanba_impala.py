@@ -41,7 +41,13 @@ from cleanba.impala_loss import (
     single_device_update,
     tree_flatten_and_concat,
 )
-from cleanba.network import AgentParams, Policy, PolicyCarryT, label_and_learning_rate_for_params
+from cleanba.network import (
+    AgentParams,
+    Policy,
+    PolicyCarryT,
+    SokobanResNetConfig,
+    label_and_learning_rate_for_params,
+)
 from cleanba.optimizer import rmsprop_pytorch_style
 
 # Make Jax CPU use 1 thread only https://github.com/google/jax/issues/743
@@ -951,6 +957,8 @@ def load_train_state(
     dir: Path,
     env_cfg=None,  # environment config from the learned_planner package are also supported
     finetune_with_noop_head: bool = False,
+    duplicate_last_block: bool = False,
+    freeze_duplicate: bool = True,
 ) -> tuple[Policy, PolicyCarryT, Args, TrainState, int]:
     with open(dir / "cfg.json", "r") as f:
         args_dict = json.load(f)
@@ -981,6 +989,25 @@ def load_train_state(
 
     if finetune_with_noop_head:
         env_cfg = dataclasses.replace(env_cfg, nn_without_noop=False)
+
+    if duplicate_last_block and isinstance(args.net, SokobanResNetConfig):
+        args = dataclasses.replace(
+            args,
+            net=dataclasses.replace(
+                args.net,
+                duplicate_last_block=True,
+                freeze_duplicate=freeze_duplicate,
+            ),
+        )
+    if duplicate_last_block and isinstance(args.net, GTrXLConfig):
+        args = dataclasses.replace(
+            args,
+            net=dataclasses.replace(
+                args.net,
+                duplicate_last_block=True,
+                freeze_duplicate=freeze_duplicate,
+            ),
+        )
 
     env = env_cfg.make()
     policy, carry, params = args.net.init_params(env, jax.random.PRNGKey(1234))

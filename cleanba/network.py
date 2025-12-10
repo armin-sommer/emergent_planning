@@ -385,6 +385,8 @@ class SokobanResNetConfig(PolicySpec):
     mlp_hiddens: tuple[int, ...] = ()
 
     last_activation: Literal["relu", "tanh"] = "relu"
+    duplicate_last_block: bool = False
+    freeze_duplicate: bool = True
 
     def make(self) -> nn.Module:
         return SokobanResNet(self)
@@ -408,8 +410,15 @@ class SokobanResNet(nn.Module):
             name=INPUT_SENTINEL,
         )(x)
 
+        last_block = None
         for layer_i, (chan, kern) in enumerate(zip(self.cfg.channels[1:], self.cfg.kernel_sizes[1:])):
-            x = SokobanResidualBlock(chan, kern, self.cfg.yang_init)(x, self.cfg.norm)
+            last_block = SokobanResidualBlock(chan, kern, self.cfg.yang_init)
+            x = last_block(x, self.cfg.norm)
+        if self.cfg.duplicate_last_block and last_block is not None:
+            # Optionally run the last residual block a second time; reuse its weights and
+            # stop gradients flowing back into the earlier stack when frozen.
+            block_input = jax.lax.stop_gradient(x) if self.cfg.freeze_duplicate else x
+            x = last_block(block_input, self.cfg.norm)
         x = x.reshape((x.shape[0], np.prod(x.shape[-3:])))
 
         for hidden in self.cfg.mlp_hiddens:
