@@ -533,6 +533,8 @@ class GuezResNetConfig(PolicySpec):
     kernel_sizes: tuple[int, ...] = (4,) * 9
 
     mlp_hiddens: tuple[int, ...] = (256,)
+    duplicate_last_block: bool = False
+    freeze_duplicate: bool = True
 
     def make(self) -> nn.Module:
         return GuezResNet(self)
@@ -598,10 +600,18 @@ class GuezResNet(nn.Module):
     @nn.compact
     def __call__(self, x):
         x = self.cfg.norm(x)
+        last_seq = None
         for layer_i, (channels, strides, ksize) in enumerate(zip(self.cfg.channels, self.cfg.strides, self.cfg.kernel_sizes)):
-            x = GuezConvSequence(
+            last_seq = GuezConvSequence(
                 channels, kernel_size=ksize, strides=strides, yang_init=self.cfg.yang_init, is_input=(layer_i == 0)
-            )(x, norm=self.cfg.norm)
+            )
+            x = last_seq(x, norm=self.cfg.norm)
+
+        if self.cfg.duplicate_last_block and last_seq is not None:
+            # Re-apply the last conv+residual sequence once more, reusing its weights.
+            # If freeze_duplicate=True, stop gradients flowing into the earlier stack (training-only effect).
+            block_input = jax.lax.stop_gradient(x) if self.cfg.freeze_duplicate else x
+            x = last_seq(block_input, norm=self.cfg.norm)
 
         if isinstance(self.cfg.norm, IdentityNorm) and self.cfg.yang_init:
             x = 2 * nn.relu(x)

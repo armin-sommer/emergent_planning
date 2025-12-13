@@ -142,11 +142,10 @@ class GTrXLLayer(nn.Module):
         self.ff_proj1 = nn.Dense(self.d_model * self.ff_mult)
         self.ff_proj2 = nn.Dense(self.d_model)
         self.ff_dropout = nn.Dropout(rate=self.dropout)
-        # Define GRU gates as submodules instead of instantiating them in __call__
         self.attn_gate = GRUGate(self.d_model)
         self.ff_gate = GRUGate(self.d_model)
 
-    def __call__(self, x: jax.Array, mem: jax.Array, mask: jax.Array, deterministic: bool):
+    def _block(self, x: jax.Array, mem: jax.Array, mask: jax.Array, deterministic: bool) -> jax.Array:
         h = self.attn_norm(x)
         attn = self.attn(h, mem, mask, deterministic=deterministic)
         x = self.attn_gate(x, attn)
@@ -157,6 +156,28 @@ class GTrXLLayer(nn.Module):
         ff = self.ff_dropout(ff, deterministic=deterministic)
         ff = self.ff_proj2(ff)
         x = self.ff_gate(x, ff)
+
+        return x
+
+    def __call__(
+        self,
+        x: jax.Array,
+        mem: jax.Array,
+        mask: jax.Array,
+        deterministic: bool,
+        *,
+        duplicate: bool = False,
+        freeze_duplicate: bool = True,
+    ):
+        # First pass through the layer using the current memory.
+        x = self._block(x, mem, mask, deterministic)
+
+        # Optional second pass that reuses the same gating and memory context.
+        # We do not append an extra time step to memory; instead we refine x
+        # while only writing a single updated state into memory below.
+        if duplicate:
+            dup_input = jax.lax.stop_gradient(x) if freeze_duplicate else x
+            x = self._block(dup_input, mem, mask, deterministic)
 
         if self.mem_len > 0:
             new_mem = jnp.concatenate([mem, x], axis=1)
@@ -234,16 +255,17 @@ class GTrXL(nn.Module):
 
         new_mems: list[jax.Array] = []
         h = x
-        for layer, mem in zip(self.layers, mems):
-            h, mem = layer(h, mem, mask, deterministic=deterministic)
+        for i, (layer, mem) in enumerate(zip(self.layers, mems)):
+            is_last = i == len(self.layers) - 1
+            h, mem = layer(
+                h,
+                mem,
+                mask,
+                deterministic=deterministic,
+                duplicate=is_last and self.cfg.duplicate_last_block,
+                freeze_duplicate=self.cfg.freeze_duplicate,
+            )
             new_mems.append(mem)
-
-        if self.cfg.duplicate_last_block and self.layers:
-            last_layer = self.layers[-1]
-            last_mem = new_mems[-1]
-            dup_input = jax.lax.stop_gradient(h) if self.cfg.freeze_duplicate else h
-            h, last_mem = last_layer(dup_input, last_mem, mask, deterministic=deterministic)
-            new_mems[-1] = last_mem
 
         h = h.squeeze(1)  # (B, d_model)
         for dense, norm in zip(self.head_mlp, self.head_norms):

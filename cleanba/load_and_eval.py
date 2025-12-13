@@ -13,6 +13,7 @@ from rich.pretty import pprint
 from cleanba.cleanba_impala import WandbWriter, load_train_state
 from cleanba.environments import EnvpoolBoxobanConfig
 from cleanba.evaluate import EvalConfig
+from cleanba.network import GuezResNetConfig, SokobanResNetConfig
 
 
 def default_eval_envs(CACHE_PATH=Path("/opt/sokoban_cache")) -> dict[str, EvalConfig]:
@@ -132,6 +133,10 @@ def load_and_eval(args: LoadAndEvalArgs):
         duplicate_last_block=args.duplicate_last_block,
         freeze_duplicate=args.freeze_duplicate,
     )
+    if isinstance(cp_cfg.net, (SokobanResNetConfig, GuezResNetConfig)):
+        print("Detected ResNet policy; forcing steps_to_think=[0] for eval.")
+        for eval_cfg in args.eval_envs.values():
+            eval_cfg.steps_to_think = [0]
     get_action_fn = jax.jit(partial(policy.apply, method=policy.get_action), static_argnames="temperature")
 
     writer = WandbWriter(cp_cfg, wandb_cfg_extra_data={"load_other_run": str(args.load_other_run)})
