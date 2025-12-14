@@ -43,6 +43,7 @@ from cleanba.impala_loss import (
 )
 from cleanba.network import (
     AgentParams,
+    GuezResNetConfig,
     Policy,
     PolicyCarryT,
     SokobanResNetConfig,
@@ -991,6 +992,15 @@ def load_train_state(
         env_cfg = dataclasses.replace(env_cfg, nn_without_noop=False)
 
     if duplicate_last_block and isinstance(args.net, SokobanResNetConfig):
+        args = dataclasses.replace(
+            args,
+            net=dataclasses.replace(
+                args.net,
+                duplicate_last_block=True,
+                freeze_duplicate=freeze_duplicate,
+            ),
+        )
+    if duplicate_last_block and isinstance(args.net, GuezResNetConfig):
         args = dataclasses.replace(
             args,
             net=dataclasses.replace(
