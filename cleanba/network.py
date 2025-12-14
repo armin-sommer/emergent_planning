@@ -387,7 +387,6 @@ class SokobanResNetConfig(PolicySpec):
     last_activation: Literal["relu", "tanh"] = "relu"
     duplicate_last_block: bool = False
     freeze_duplicate: bool = True
-    reapply_last_n_blocks: int = 0
 
     def make(self) -> nn.Module:
         return SokobanResNet(self)
@@ -411,21 +410,15 @@ class SokobanResNet(nn.Module):
             name=INPUT_SENTINEL,
         )(x)
 
-        blocks = []
+        last_block = None
         for layer_i, (chan, kern) in enumerate(zip(self.cfg.channels[1:], self.cfg.kernel_sizes[1:])):
-            block = SokobanResidualBlock(chan, kern, self.cfg.yang_init)
-            blocks.append(block)
-            x = block(x, self.cfg.norm)
-        n = self.cfg.reapply_last_n_blocks
-        if n == 0 and self.cfg.duplicate_last_block:
-            n = 1
-        if n > 0:
-            n = min(n, len(blocks))
-            # Optionally re-run the tail of the stack with shared weights; freeze_duplicate stops backprop into earlier layers.
+            last_block = SokobanResidualBlock(chan, kern, self.cfg.yang_init)
+            x = last_block(x, self.cfg.norm)
+        if self.cfg.duplicate_last_block and last_block is not None:
+            # Optionally run the last residual block a second time; reuse its weights and
+            # stop gradients flowing back into the earlier stack when frozen.
             block_input = jax.lax.stop_gradient(x) if self.cfg.freeze_duplicate else x
-            for block in blocks[-n:]:
-                block_input = block(block_input, self.cfg.norm)
-            x = block_input
+            x = last_block(block_input, self.cfg.norm)
         x = x.reshape((x.shape[0], np.prod(x.shape[-3:])))
 
         for hidden in self.cfg.mlp_hiddens:
@@ -542,7 +535,6 @@ class GuezResNetConfig(PolicySpec):
     mlp_hiddens: tuple[int, ...] = (256,)
     duplicate_last_block: bool = False
     freeze_duplicate: bool = True
-    reapply_last_n_blocks: int = 0
 
     def make(self) -> nn.Module:
         return GuezResNet(self)
@@ -608,24 +600,18 @@ class GuezResNet(nn.Module):
     @nn.compact
     def __call__(self, x):
         x = self.cfg.norm(x)
-        seqs = []
+        last_seq = None
         for layer_i, (channels, strides, ksize) in enumerate(zip(self.cfg.channels, self.cfg.strides, self.cfg.kernel_sizes)):
-            seq = GuezConvSequence(
+            last_seq = GuezConvSequence(
                 channels, kernel_size=ksize, strides=strides, yang_init=self.cfg.yang_init, is_input=(layer_i == 0)
             )
-            seqs.append(seq)
-            x = seq(x, norm=self.cfg.norm)
+            x = last_seq(x, norm=self.cfg.norm)
 
-        n = self.cfg.reapply_last_n_blocks
-        if n == 0 and self.cfg.duplicate_last_block:
-            n = 1
-        if n > 0:
-            n = min(n, len(seqs))
-            # Re-apply the tail sequences with shared weights; optionally stop gradients into earlier layers.
+        if self.cfg.duplicate_last_block and last_seq is not None:
+            # Re-apply the last conv+residual sequence once more, reusing its weights.
+            # If freeze_duplicate=True, stop gradients flowing into the earlier stack (training-only effect).
             block_input = jax.lax.stop_gradient(x) if self.cfg.freeze_duplicate else x
-            for seq in seqs[-n:]:
-                block_input = seq(block_input, norm=self.cfg.norm)
-            x = block_input
+            x = last_seq(block_input, norm=self.cfg.norm)
 
         if isinstance(self.cfg.norm, IdentityNorm) and self.cfg.yang_init:
             x = 2 * nn.relu(x)

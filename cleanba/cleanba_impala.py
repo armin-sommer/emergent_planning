@@ -43,7 +43,6 @@ from cleanba.impala_loss import (
 )
 from cleanba.network import (
     AgentParams,
-    GuezResNetConfig,
     Policy,
     PolicyCarryT,
     SokobanResNetConfig,
@@ -960,7 +959,6 @@ def load_train_state(
     finetune_with_noop_head: bool = False,
     duplicate_last_block: bool = False,
     freeze_duplicate: bool = True,
-    reapply_last_n_blocks: int = 0,
 ) -> tuple[Policy, PolicyCarryT, Args, TrainState, int]:
     with open(dir / "cfg.json", "r") as f:
         args_dict = json.load(f)
@@ -992,26 +990,15 @@ def load_train_state(
     if finetune_with_noop_head:
         env_cfg = dataclasses.replace(env_cfg, nn_without_noop=False)
 
-    if isinstance(args.net, SokobanResNetConfig):
-        net_cfg = args.net
-        if duplicate_last_block or reapply_last_n_blocks:
-            net_cfg = dataclasses.replace(
-                net_cfg,
-                duplicate_last_block=duplicate_last_block or net_cfg.duplicate_last_block,
+    if duplicate_last_block and isinstance(args.net, SokobanResNetConfig):
+        args = dataclasses.replace(
+            args,
+            net=dataclasses.replace(
+                args.net,
+                duplicate_last_block=True,
                 freeze_duplicate=freeze_duplicate,
-                reapply_last_n_blocks=reapply_last_n_blocks or net_cfg.reapply_last_n_blocks,
-            )
-        args = dataclasses.replace(args, net=net_cfg)
-    if isinstance(args.net, GuezResNetConfig):
-        net_cfg = args.net
-        if duplicate_last_block or reapply_last_n_blocks:
-            net_cfg = dataclasses.replace(
-                net_cfg,
-                duplicate_last_block=duplicate_last_block or net_cfg.duplicate_last_block,
-                freeze_duplicate=freeze_duplicate,
-                reapply_last_n_blocks=reapply_last_n_blocks or net_cfg.reapply_last_n_blocks,
-            )
-        args = dataclasses.replace(args, net=net_cfg)
+            ),
+        )
     if duplicate_last_block and isinstance(args.net, GTrXLConfig):
         args = dataclasses.replace(
             args,
