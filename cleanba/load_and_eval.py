@@ -82,6 +82,7 @@ class LoadAndEvalArgs:
     base_run_dir: Path = Path("/training/cleanba")
     duplicate_last_block: bool = False
     freeze_duplicate: bool = True
+    reapply_last_n_blocks: int = 0
 
     @property
     def total_timesteps(self) -> int:
@@ -132,6 +133,7 @@ def load_and_eval(args: LoadAndEvalArgs):
         env_cfg=env_cfg,
         duplicate_last_block=args.duplicate_last_block,
         freeze_duplicate=args.freeze_duplicate,
+        reapply_last_n_blocks=args.reapply_last_n_blocks,
     )
     if isinstance(cp_cfg.net, (SokobanResNetConfig, GuezResNetConfig)):
         print("Detected ResNet policy; forcing steps_to_think=[0] for eval.")
@@ -146,6 +148,7 @@ def load_and_eval(args: LoadAndEvalArgs):
             env_cfg=env_cfg,
             duplicate_last_block=args.duplicate_last_block,
             freeze_duplicate=args.freeze_duplicate,
+            reapply_last_n_blocks=args.reapply_last_n_blocks,
         )
         print("Evaluating", cp_path)
 
